@@ -34,3 +34,7 @@ It builds a **Retrieval-Augmented Generation (RAG)** pipeline with persistent me
 | **Persistence**  | JSON chat history + Chroma DB                                                             |
 
 ---
+
+## Deployment
+
+The app can be accessed from: [text](https://docubot-21.streamlit.app/)
