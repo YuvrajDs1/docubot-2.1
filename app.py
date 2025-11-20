@@ -26,9 +26,6 @@ from langchain.schema import Document
 # Load .env
 load_dotenv()
 
-# ----------------------
-# Utility functions
-# ----------------------
 DB_DIR = "./db"
 DB_META_PATH = os.path.join(DB_DIR, "db_metadata.json")
 SESSIONS_DIR = "./sessions"
@@ -63,20 +60,18 @@ def load_session_history(session_id: str) -> List[dict]:
             return json.load(f)
     return []
 
-# ----------------------
-# Streamlit UI Setup
-# ----------------------
+
 st.set_page_config(page_title="DocuBot 2.1", page_icon="🤖", layout="wide")
 st.title("🤖 DocuBot 2.1 — Improved Conversational RAG")
 
-# Sidebar: API key + model config + DB controls
+
 st.sidebar.header("Configuration")
 api_key = st.sidebar.text_input("GROQ API key", type="password")
 st.sidebar.markdown("[Get a GROQ API key](https://console.groq.com/docs/models)")
 
 model_choice = st.sidebar.selectbox(
     "Model",
-    options=["llama-3.1-8b-instant"],  # expand if you want more
+    options=["llama-3.1-8b-instant"], 
     index=0
 )
 temperature = st.sidebar.slider("Temperature", 0.0, 1.0, 0.0, step=0.1)
@@ -98,15 +93,11 @@ if not api_key:
     st.warning("Enter your GROQ API key in the sidebar to use the assistant.")
     st.stop()
 
-# ----------------------
-# Initialize LLM
-# ----------------------
+
 os.environ["GROQ_API_KEY"] = api_key
 llm = ChatGroq(model=model_choice, api_key=api_key, temperature=float(temperature))
 
-# ----------------------
-# Session management
-# ----------------------
+
 if "session_id" not in st.session_state:
     st.session_state.session_id = str(uuid.uuid4())
 
@@ -115,22 +106,19 @@ session_id: str = st.session_state.session_id
 if "store" not in st.session_state:
     st.session_state.store = {}
 
-# persist/load chat history (simple JSON)
+
 history_msgs = load_session_history(session_id)
-# internal ChatMessageHistory used by RunnableWithMessageHistory
+
 def get_session_history_obj(session_id: str) -> BaseChatMessageHistory:
     if session_id not in st.session_state.store:
         st.session_state.store[session_id] = ChatMessageHistory()
         # Load persisted messages into the ChatMessageHistory if we have them
         for m in history_msgs:
-            # ChatMessageHistory expects dicts like {"type":"human"/"ai", "data": {"content":"..."}}
-            # In practice ChatMessageHistory implementation may differ; we will store in session_state.store for runnables
+
             st.session_state.store[session_id].add_user_message(m["content"]) if m["role"] == "human" else st.session_state.store[session_id].add_ai_message(m["content"])
     return st.session_state.store[session_id]
 
-# ----------------------
-# Load / Update vectorstore (with incremental embedding)
-# ----------------------
+
 @st.cache_resource(show_spinner=True)
 def get_embeddings_instance():
     return HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-l6-v2")
@@ -187,7 +175,7 @@ def create_or_update_vectorstore_from_uploads(uploaded_files) -> Chroma:
                 # skip embedding - already present
                 continue
 
-    # If DB already exists, load and add; else create new
+
     if os.path.exists(DB_DIR):
         vect = Chroma(persist_directory=DB_DIR, embedding_function=embeddings)
         if all_splits:
@@ -196,13 +184,13 @@ def create_or_update_vectorstore_from_uploads(uploaded_files) -> Chroma:
     else:
         # create new
         vect = Chroma.from_documents(documents=all_splits, embedding=embeddings, persist_directory=DB_DIR) if all_splits else Chroma(persist_directory=DB_DIR, embedding_function=embeddings)
-        # When created via from_documents, persist was done inside; but call persist to be safe
+
         try:
             vect.persist()
         except Exception:
             pass
 
-    # update metadata
+
     meta_hashes = set(meta.get("hashes", []))
     meta_hashes.update(new_hashes)
     save_db_metadata({"hashes": list(meta_hashes)})
@@ -216,7 +204,6 @@ uploaded_files = st.file_uploader(
     type=["pdf"]
 )
 
-# Button to explicitly add documents in addition to current DB (allows incremental adds)
 if st.button("Add uploaded PDFs to DB"):
     if not uploaded_files:
         st.warning("No files selected to add.")
@@ -228,7 +215,6 @@ if st.button("Add uploaded PDFs to DB"):
             except Exception as e:
                 st.error(f"Error processing uploads: {e}")
 
-# Ensure vectorstore exists (reuse or create empty)
 try:
     vectorstore = create_or_update_vectorstore_from_uploads(uploaded_files)
 except Exception as e:
@@ -244,9 +230,7 @@ except Exception:
     count = "unknown"
 st.sidebar.metric("Indexed chunks (approx)", count)
 
-# ----------------------
-# Prompt templates & chains
-# ----------------------
+
 contextualize_q_system_prompt = (
     "Given the chat history and the latest user question which might reference context in the chat history, "
     "formulate a standalone question which can be understood without the chat history. Do not answer the question; just rewrite it if needed."
@@ -271,7 +255,6 @@ history_aware_retriever = create_history_aware_retriever(llm, retriever, context
 question_answer_chain = create_stuff_documents_chain(llm, qa_prompt)
 rag_chain = create_retrieval_chain(history_aware_retriever, question_answer_chain)
 
-# Runnable with message history
 conversational_rag_chain = RunnableWithMessageHistory(
     rag_chain,
     get_session_history_obj,
@@ -280,9 +263,7 @@ conversational_rag_chain = RunnableWithMessageHistory(
     output_messages_key="answer"
 )
 
-# ----------------------
-# Chat UI & Interaction
-# ----------------------
+
 st.divider()
 st.subheader("💬 Chat (conversational)")
 
@@ -305,13 +286,12 @@ with chat_container:
 user_input = st.chat_input("Ask a question about your documents...")
 
 if user_input:
-    # add user message to UI & to persisted history
     with st.chat_message("user"):
         st.write(user_input)
     json_history.append({"role": "human", "content": user_input})
     save_session_history(session_id, json_history)
 
-    # Retrieve top-k docs to display context (non-history-aware retrieval for transparency)
+ 
     try:
         with st.spinner("Retrieving relevant context..."):
             retrieved_docs = retriever.get_relevant_documents(user_input)
@@ -331,7 +311,6 @@ if user_input:
     else:
         st.info("No context retrieved (vector DB may be empty).")
 
-    # Call the conversational chain to get answer (history-aware)
     try:
         with st.spinner("Generating answer..."):
             response = conversational_rag_chain.invoke(
@@ -341,12 +320,12 @@ if user_input:
         answer = response.get("answer", "No answer returned.")
         with st.chat_message("assistant"):
             st.write(answer)
-        # append assistant to persisted json history and save
+
         json_history.append({"role": "assistant", "content": answer})
         save_session_history(session_id, json_history)
     except Exception as e:
         st.error(f"Error generating answer: {e}")
 
-# small footer
+
 st.write("---")
 st.caption("DocuBot 2.1 — features: metadata-backed retrieval, incremental embedding, persisted chat history.")
